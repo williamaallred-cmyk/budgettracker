@@ -1,6 +1,3 @@
-# Firebase configuration (keep your credentials private)
-firebase-config.js
-
 # Node modules if you add any
 node_modules/
 
