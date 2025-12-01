@@ -43,8 +43,13 @@
         <p class="text-gray-500 mb-6">Tap a category below to log an expense.</p>
 
         <!-- Current User Info -->
-        <div id="user-info" class="mb-6 p-3 bg-indigo-50 rounded-lg text-sm text-indigo-800 border-l-4 border-indigo-400">
-            <span class="font-semibold">Loading User...</span>
+        <div class="mb-6 space-y-2">
+            <div id="user-info" class="p-3 bg-indigo-50 rounded-lg text-sm text-indigo-800 border-l-4 border-indigo-400">
+                <span class="font-semibold">Loading User...</span>
+            </div>
+            <div id="date-range-info" class="p-3 bg-green-50 rounded-lg text-sm text-green-800 border-l-4 border-green-400">
+                <span class="font-semibold">Tracking since:</span> <span id="start-date-display">All time</span>
+            </div>
         </div>
         
         <!-- ============================================== -->
@@ -90,11 +95,11 @@
                     📊 View All Logs
                 </button>
                 <button 
-                    id="reset-budget-button" 
-                    class="px-6 py-2 bg-red-500 text-white font-semibold rounded-lg hover:bg-red-600 transition duration-150"
-                    onclick="resetMonthlyBudget()"
+                    id="set-start-date-button" 
+                    class="px-6 py-2 bg-purple-500 text-white font-semibold rounded-lg hover:bg-purple-600 transition duration-150"
+                    onclick="setStartDate()"
                 >
-                    🔄 Reset Month
+                    📅 Set Start Date
                 </button>
             </div>
         </div>
@@ -317,9 +322,11 @@
         let isAuthReady = false;
         let currentCategory = null;
         let currentBudgets = {}; // Store current budgets globally
+        let startDate = null; // Tracking start date
 
         const BUDGET_DOC_ID = 'monthly_budgets'; // Single document ID for budgets
         const CATEGORIES_DOC_ID = 'user_categories'; // Single document ID for categories
+        const START_DATE_DOC_ID = 'tracking_start_date'; // Single document ID for start date
 
         // Default Category List (will be overridden by Firebase data)
         let categories = [
@@ -511,8 +518,9 @@
                         console.log("Firebase Auth Ready. Using Shared User ID:", userId);
                         userInfoDiv.innerHTML = `<span class="font-semibold">Status:</span> Connected (Shared Family Budget)`;
                         
-                        // Load categories from Firebase first
+                        // Load categories and start date from Firebase first
                         await loadCategories();
+                        await loadStartDate();
                         
                         // Start listening to data once authenticated
                         startBudgetListener(); // Must start budget listener first to populate currentBudgets
@@ -591,7 +599,13 @@
                 snapshot.forEach((doc) => {
                     const data = { id: doc.id, ...doc.data() };
                     entries.push(data);
-                    
+                });
+
+                // Filter by start date
+                const filteredEntries = filterEntriesByDate(entries);
+                
+                // Calculate totals from filtered entries
+                filteredEntries.forEach((data) => {
                     if (data.amount > 0) {
                         totalSpent += data.amount;
                         if (categorySpending.hasOwnProperty(data.category)) {
@@ -601,14 +615,14 @@
                 });
 
                 // Sort by timestamp (latest first)
-                entries.sort((a, b) => {
+                filteredEntries.sort((a, b) => {
                     const timeA = a.timestamp?.toMillis ? a.timestamp.toMillis() : 0;
                     const timeB = b.timestamp?.toMillis ? b.timestamp.toMillis() : 0;
                     return timeB - timeA;
                 });
 
-                // Cache all entries for log viewing
-                allEntriesCache = entries;
+                // Cache filtered entries for log viewing
+                allEntriesCache = filteredEntries;
 
                 // Update all tracker UI components
                 updateTrackerUI(entries, totalSpent, categorySpending);
@@ -951,42 +965,90 @@
         }
         
         /**
-         * Resets the monthly budget by deleting all entries.
+         * Sets a new tracking start date.
          */
-        window.resetMonthlyBudget = async function() {
-            if (!confirm('Are you sure you want to reset this month? This will delete ALL logged expenses. This action cannot be undone!')) {
-                return;
-            }
-            
-            if (!confirm('Really? All your expense data for this month will be permanently deleted. Last chance!')) {
-                return;
-            }
-            
+        window.setStartDate = async function() {
             if (!isAuthReady || !userId) {
                 alert('Authentication not ready. Please wait and try again.');
                 return;
             }
             
+            const dateInput = prompt('Enter start date (YYYY-MM-DD):', new Date().toISOString().split('T')[0]);
+            
+            if (!dateInput) return; // User cancelled
+            
+            const parsedDate = new Date(dateInput);
+            if (isNaN(parsedDate.getTime())) {
+                alert('Invalid date format. Please use YYYY-MM-DD');
+                return;
+            }
+            
             try {
-                // Import deleteDoc and getDocs
-                const { collection: firestoreCollection, getDocs, deleteDoc, doc: firestoreDoc } = await import("https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js");
+                const startDateDocRef = doc(db, `users/${userId}/settings`, START_DATE_DOC_ID);
+                await setDoc(startDateDocRef, { startDate: parsedDate.toISOString() });
                 
-                const expensesRef = firestoreCollection(db, `users/${userId}/expenditures`);
-                const snapshot = await getDocs(expensesRef);
+                startDate = parsedDate;
+                updateStartDateDisplay();
                 
-                const deletePromises = [];
-                snapshot.forEach((docSnapshot) => {
-                    deletePromises.push(deleteDoc(docSnapshot.ref));
-                });
-                
-                await Promise.all(deletePromises);
-                
-                alert(`✅ Month reset successfully! Deleted ${deletePromises.length} entries.`);
+                alert('✅ Start date set successfully!');
                 
             } catch (error) {
-                console.error('Error resetting month:', error);
-                alert(`❌ Error resetting month: ${error.message}`);
+                console.error('Error setting start date:', error);
+                alert(`❌ Error setting start date: ${error.message}`);
             }
+        }
+        
+        /**
+         * Loads the tracking start date from Firestore.
+         */
+        async function loadStartDate() {
+            if (!isAuthReady || !userId) return;
+            
+            try {
+                const startDateDocRef = doc(db, `users/${userId}/settings`, START_DATE_DOC_ID);
+                const docSnap = await getDoc(startDateDocRef);
+                
+                if (docSnap.exists()) {
+                    const data = docSnap.data();
+                    if (data.startDate) {
+                        startDate = new Date(data.startDate);
+                    }
+                }
+                
+                updateStartDateDisplay();
+            } catch (error) {
+                console.error('Error loading start date:', error);
+            }
+        }
+        
+        /**
+         * Updates the start date display.
+         */
+        function updateStartDateDisplay() {
+            const startDateDisplay = document.getElementById('start-date-display');
+            if (startDateDisplay) {
+                if (startDate) {
+                    startDateDisplay.textContent = startDate.toLocaleDateString('en-US', { 
+                        year: 'numeric', 
+                        month: 'long', 
+                        day: 'numeric' 
+                    });
+                } else {
+                    startDateDisplay.textContent = 'All time';
+                }
+            }
+        }
+        
+        /**
+         * Filters entries based on the start date.
+         */
+        function filterEntriesByDate(entries) {
+            if (!startDate) return entries;
+            
+            return entries.filter(entry => {
+                const entryDate = entry.timestamp?.toDate ? entry.timestamp.toDate() : new Date(0);
+                return entryDate >= startDate;
+            });
         }
 
 
