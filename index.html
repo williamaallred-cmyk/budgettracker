@@ -67,7 +67,7 @@
             </div>
             
             <!-- Setup Buttons -->
-            <div class="mt-6 pt-4 border-t border-gray-100 flex justify-center gap-3">
+            <div class="mt-6 pt-4 border-t border-gray-100 flex flex-wrap justify-center gap-3">
                 <button 
                     id="setup-button" 
                     class="px-6 py-2 bg-gray-200 text-gray-700 font-semibold rounded-lg hover:bg-gray-300 transition duration-150"
@@ -81,6 +81,20 @@
                     onclick="switchView('category-management')"
                 >
                     🏷️ Manage Categories
+                </button>
+                <button 
+                    id="view-logs-button" 
+                    class="px-6 py-2 bg-blue-500 text-white font-semibold rounded-lg hover:bg-blue-600 transition duration-150"
+                    onclick="switchView('view-logs')"
+                >
+                    📊 View All Logs
+                </button>
+                <button 
+                    id="reset-budget-button" 
+                    class="px-6 py-2 bg-red-500 text-white font-semibold rounded-lg hover:bg-red-600 transition duration-150"
+                    onclick="resetMonthlyBudget()"
+                >
+                    🔄 Reset Month
                 </button>
             </div>
         </div>
@@ -184,6 +198,57 @@
                 </button>
             </div>
             <p id="category-status-message" class="text-sm text-center font-medium h-5 transition-opacity opacity-0 mt-4"></p>
+        </div>
+
+        <!-- ============================================== -->
+        <!-- VIEW 4: VIEW LOGS -->
+        <!-- ============================================== -->
+        <div data-view="view-logs" class="hidden">
+            <h2 class="text-2xl font-bold text-gray-700 mb-4">View All Logs</h2>
+            <p class="text-sm text-gray-500 mb-6">Select a category to view all entries for this month.</p>
+
+            <!-- Category Selection -->
+            <div id="log-category-selector" class="grid grid-cols-2 sm:grid-cols-3 gap-3 mb-6">
+                <!-- Category buttons will be dynamically inserted here -->
+            </div>
+
+            <!-- Selected Category Details -->
+            <div id="log-details" class="hidden">
+                <div class="bg-indigo-50 p-4 rounded-lg mb-4">
+                    <h3 class="text-lg font-bold text-indigo-700 mb-2">
+                        <span id="log-category-icon"></span> <span id="log-category-title"></span>
+                    </h3>
+                    <div class="flex justify-between text-sm">
+                        <span class="text-gray-600">Total Spent:</span>
+                        <span id="log-category-total" class="font-bold text-red-600"></span>
+                    </div>
+                    <div class="flex justify-between text-sm">
+                        <span class="text-gray-600">Budget:</span>
+                        <span id="log-category-budget" class="font-bold text-gray-700"></span>
+                    </div>
+                    <div class="flex justify-between text-sm">
+                        <span class="text-gray-600">Remaining:</span>
+                        <span id="log-category-remaining" class="font-bold"></span>
+                    </div>
+                </div>
+
+                <!-- All Entries List -->
+                <div class="space-y-2 max-h-96 overflow-y-auto">
+                    <div id="log-entries-list">
+                        <!-- Entries will be dynamically inserted here -->
+                    </div>
+                </div>
+            </div>
+
+            <div class="flex justify-between mt-8 pt-4 border-t border-gray-100">
+                <button 
+                    class="px-6 py-2 bg-gray-200 text-gray-700 font-semibold rounded-lg hover:bg-gray-300 transition duration-150"
+                    onclick="switchView('tracker')"
+                    type="button"
+                >
+                    ← Back to Tracker
+                </button>
+            </div>
         </div>
 
     </div>
@@ -408,6 +473,14 @@
             if (viewName === 'category-management' && isAuthReady && userId) {
                 renderCategoryManagement();
             }
+            
+            // If switching to view logs, render category selector
+            if (viewName === 'view-logs' && isAuthReady && userId) {
+                renderLogCategorySelector();
+                // Hide details initially
+                const logDetails = document.getElementById('log-details');
+                if (logDetails) logDetails.classList.add('hidden');
+            }
         }
 
         // --- Firebase Core Functions ---
@@ -533,6 +606,9 @@
                     const timeB = b.timestamp?.toMillis ? b.timestamp.toMillis() : 0;
                     return timeB - timeA;
                 });
+
+                // Cache all entries for log viewing
+                allEntriesCache = entries;
 
                 // Update all tracker UI components
                 updateTrackerUI(entries, totalSpent, categorySpending);
@@ -766,6 +842,151 @@
                 `;
                 categoryList.appendChild(categoryDiv);
             });
+        }
+
+
+        // --- Log Viewing Functions ---
+        
+        let allEntriesCache = []; // Cache all entries for filtering
+        
+        /**
+         * Renders the category selector buttons in the log view.
+         */
+        function renderLogCategorySelector() {
+            const logCategorySelector = document.getElementById('log-category-selector');
+            if (!logCategorySelector) return;
+            
+            logCategorySelector.innerHTML = '';
+            
+            categories.forEach(cat => {
+                const button = document.createElement('button');
+                button.className = `w-full p-3 font-semibold rounded-lg transition duration-150 transform hover:scale-[1.02] ${cat.color} shadow-lg flex items-center justify-center space-x-2`;
+                button.innerHTML = `
+                    <span class="text-lg">${cat.icon}</span>
+                    <span class="text-white">${cat.name}</span>
+                `;
+                button.onclick = () => showCategoryLogs(cat.name);
+                logCategorySelector.appendChild(button);
+            });
+        }
+        
+        /**
+         * Shows detailed logs for a specific category.
+         */
+        function showCategoryLogs(categoryName) {
+            const logDetails = document.getElementById('log-details');
+            const logCategoryIcon = document.getElementById('log-category-icon');
+            const logCategoryTitle = document.getElementById('log-category-title');
+            const logCategoryTotal = document.getElementById('log-category-total');
+            const logCategoryBudget = document.getElementById('log-category-budget');
+            const logCategoryRemaining = document.getElementById('log-category-remaining');
+            const logEntriesList = document.getElementById('log-entries-list');
+            
+            // Find category details
+            const category = categories.find(cat => cat.name === categoryName);
+            if (!category) return;
+            
+            // Filter entries for this category
+            const categoryEntries = allEntriesCache.filter(entry => entry.category === categoryName);
+            
+            // Calculate totals
+            const totalSpent = categoryEntries.reduce((sum, entry) => sum + (entry.amount || 0), 0);
+            const budget = currentBudgets[categoryName] || 0;
+            const remaining = budget - totalSpent;
+            
+            // Update header
+            logCategoryIcon.textContent = category.icon;
+            logCategoryTitle.textContent = categoryName;
+            logCategoryTotal.textContent = formatDetailedCurrency(totalSpent);
+            logCategoryBudget.textContent = budget > 0 ? formatDetailedCurrency(budget) : 'Not set';
+            
+            if (budget > 0) {
+                if (remaining >= 0) {
+                    logCategoryRemaining.textContent = formatDetailedCurrency(remaining);
+                    logCategoryRemaining.className = 'font-bold text-green-600';
+                } else {
+                    logCategoryRemaining.textContent = formatDetailedCurrency(remaining);
+                    logCategoryRemaining.className = 'font-bold text-red-600';
+                }
+            } else {
+                logCategoryRemaining.textContent = 'N/A';
+                logCategoryRemaining.className = 'font-bold text-gray-400';
+            }
+            
+            // Render entries
+            logEntriesList.innerHTML = '';
+            
+            if (categoryEntries.length === 0) {
+                logEntriesList.innerHTML = '<p class="text-center text-gray-400 p-4">No entries for this category this month.</p>';
+            } else {
+                // Sort by date (newest first)
+                categoryEntries.sort((a, b) => {
+                    const timeA = a.timestamp?.toMillis ? a.timestamp.toMillis() : 0;
+                    const timeB = b.timestamp?.toMillis ? b.timestamp.toMillis() : 0;
+                    return timeB - timeA;
+                });
+                
+                categoryEntries.forEach(entry => {
+                    const date = entry.timestamp?.toDate ? entry.timestamp.toDate() : new Date();
+                    const dateString = date.toLocaleString('en-US', { 
+                        month: 'short', 
+                        day: 'numeric', 
+                        year: 'numeric',
+                        hour: '2-digit', 
+                        minute: '2-digit' 
+                    });
+                    
+                    const entryDiv = document.createElement('div');
+                    entryDiv.className = 'flex justify-between items-center p-3 bg-gray-50 rounded-lg border';
+                    entryDiv.innerHTML = `
+                        <span class="text-sm text-gray-500">${dateString}</span>
+                        <span class="font-mono font-bold text-red-600">-${formatDetailedCurrency(entry.amount)}</span>
+                    `;
+                    logEntriesList.appendChild(entryDiv);
+                });
+            }
+            
+            // Show details section
+            logDetails.classList.remove('hidden');
+        }
+        
+        /**
+         * Resets the monthly budget by deleting all entries.
+         */
+        window.resetMonthlyBudget = async function() {
+            if (!confirm('Are you sure you want to reset this month? This will delete ALL logged expenses. This action cannot be undone!')) {
+                return;
+            }
+            
+            if (!confirm('Really? All your expense data for this month will be permanently deleted. Last chance!')) {
+                return;
+            }
+            
+            if (!isAuthReady || !userId) {
+                alert('Authentication not ready. Please wait and try again.');
+                return;
+            }
+            
+            try {
+                // Import deleteDoc and getDocs
+                const { collection: firestoreCollection, getDocs, deleteDoc, doc: firestoreDoc } = await import("https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js");
+                
+                const expensesRef = firestoreCollection(db, `users/${userId}/expenditures`);
+                const snapshot = await getDocs(expensesRef);
+                
+                const deletePromises = [];
+                snapshot.forEach((docSnapshot) => {
+                    deletePromises.push(deleteDoc(docSnapshot.ref));
+                });
+                
+                await Promise.all(deletePromises);
+                
+                alert(`✅ Month reset successfully! Deleted ${deletePromises.length} entries.`);
+                
+            } catch (error) {
+                console.error('Error resetting month:', error);
+                alert(`❌ Error resetting month: ${error.message}`);
+            }
         }
 
 
