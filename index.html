@@ -660,7 +660,7 @@
                 allEntriesCache = filteredEntries;
 
                 // Update all tracker UI components
-                updateTrackerUI(entries, totalSpent, categorySpending);
+                updateTrackerUI(filteredEntries, totalSpent, categorySpending);
 
             }, (error) => {
                 console.error("Error listening to expenses:", error);
